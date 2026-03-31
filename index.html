@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Driving Simulation</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; }
+
+        /* --- 遊戲訊息 (如救護車提示) 保留上方，避免擋住儀表板 --- */
+        #game-message {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #ff4444; /* 紅色警示 */
+            font-family: 'Arial', sans-serif;
+            font-weight: bold;
+            font-size: 20px;
+            text-shadow: 2px 2px 0px #fff;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* --- 整合式儀表板容器 --- */
+        #dashboard {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 350px;
+            background: rgba(0, 0, 0, 0.7); /* 半透明黑底 */
+            border: 2px solid #555;
+            border-radius: 15px;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: white;
+            font-family: 'Arial', sans-serif;
+            z-index: 100;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+            pointer-events: none; /* 讓滑鼠可以穿透 */
+        }
+
+        /* --- 左右方向燈 --- */
+        .signal-arrow {
+            font-size: 50px;
+            color: #224422; /* 暗綠色 (未亮) */
+            font-weight: bold;
+            text-shadow: 0 0 2px black;
+            width: 60px;
+            text-align: center;
+            transition: color 0.1s;
+            flex-shrink: 0;
+        }
+        .signal-arrow.active {
+            color: #00ff00; /* 亮綠色 */
+            text-shadow: 0 0 15px #00ff00;
+            animation: blink 0.5s infinite alternate;
+        }
+        @keyframes blink { from { opacity: 1; } to { opacity: 0.3; } }
+
+        /* --- 中控台區域 (時速、檔位、說明) --- */
+        #center-panel {
+            flex-grow: 1;             
+            display: flex;
+            flex-direction: column;   /* 內容垂直排列 */
+            align-items: center;      /* 內容水平置中 */
+            justify-content: center;  /* 內容垂直置中 */
+        }
+
+        /* 時速表 */
+        #speed-container {
+            font-size: 48px;
+            font-weight: bold;
+            color: #00ffff; /* 科技藍 */
+            text-shadow: 0 0 10px #00ffff;
+            line-height: 1;
+            margin-bottom: 5px;
+            gap: 100px;
+
+        }
+        .unit { font-size: 16px; color: #aaa; margin-left: 5px; }
+
+        /* 檔位顯示 */
+        #gear-display {
+            display: flex;
+            gap: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 8px;
+            background: rgba(0,0,0,0.5);
+            padding: 2px 10px;
+            border-radius: 10px;
+        }
+        .gear-item { padding: 0 5px; }
+        .gear-item.active {
+            color: #ffcc00; /* 亮黃色代表當前檔位 */
+            text-shadow: 0 0 8px #ffcc00;
+            transform: scale(1.2); /* 稍微放大 */
+        }
+
+        /* 操作說明 */
+        #controls-hint {
+            font-size: 12px;
+            color: #ccc;
+            text-align: center;
+            white-space: nowrap; /* 不換行 */
+        }
+    </style>
+</head>
+<body>
+    <div id="nav-ui" style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%); text-align: center; color: white; font-family: sans-serif; text-shadow: 2px 2px 2px black; pointer-events: none; display: none;">
+    <div id="nav-arrow" style="font-size: 50px;">⬆️</div>
+    <div id="nav-text" style="font-size: 24px;">直行</div>
+    <div id="nav-dist" style="font-size: 18px; color: yellow;">剩餘 300m</div>
+</div>
+<div id="dashboard">
+    <div id="center-panel">
+        <div id="speed-container">
+            <span id="signal-left" class="signal-arrow">⬅</span>
+            <span id="speed-display">0</span>
+            <span id="signal-right" class="signal-arrow">➡</span>
+        </div>
+        
+        <div id="gear-display">
+            <span id="gear-R" class="gear-item">R</span>
+            <span id="gear-D" class="gear-item active">D</span> 
+        </div>
+
+        <div id="controls-hint">
+            <span class="key">⬆</span>加速 <span class="key">⬇</span>減速 <span class="key">⬅➡</span>轉向 
+            <span class="key">Z</span><span class="key">C</span>方向燈 <span class="key">Space</span>喇叭
+        </div>
+    </div>
+</div>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="module">
+        // 1. 匯入外部管理器
+        import { ScenarioManager } from './js/ScenarioManager.js';
+        import { GameManager } from './js/GameManager.js';
+        import { TrafficJudge } from './js/TrafficJudge.js';
+        import { NavigationSystem } from './js/NavigationSystem.js';
+
+        // --- 1. 全域變數與設定 ---
+        let speed = 0.0;
+        let maxSpeed = 1.2;
+        let minSpeed = -0.5;   
+        let carAngle = 0; 
+        let currentGear = 'D'; 
+        let frameCount = 0; 
+        let lastTime = performance.now();
+        // [新增] 序列阜相關變數
+        let reader;
+        let port;
+        let arduinoBrake = false; // 專門紀錄 Arduino 的狀態
+        let lastJoyState = "SN"; // 用來記錄搖桿狀態 (Signal Neutral)
+
+        // 燈號與路口資料
+        const trafficLightsNS = [];
+        const trafficLightsEW = [];
+        const allIntersections = []; 
+
+        // 燈號狀態
+        let currentNSState = 'red';
+        let currentEWState = 'red';
+
+        // 行人系統
+        const pedestrians = [];
+        const PEDESTRIAN_COUNT = 50;
+        
+        // 方向燈
+        let leftSignalOn = false;
+        let rightSignalOn = false;
+        const signalLeftElem = document.getElementById('signal-left');
+        const signalRightElem = document.getElementById('signal-right');
+        let hasStartedTurn = false;
+        // 道路參數
+        const BLOCK_SIZE = 300;
+        const ROAD_WIDTH = 24;
+        const BRICK_GAP = 8;
+        const SW_WIDTH = 4;
+        const SIDEWALK_OFFSET = ROAD_WIDTH / 2 + BRICK_GAP + SW_WIDTH / 2;
+        
+        // ★ 修改：設為 -1 到 2，這樣共有 4 條線，中間圍出 3x3 的街區
+        const GRID_START = 0; 
+        const GRID_END = 3;
+        
+        export const worldBounds = {
+            minX: GRID_START * BLOCK_SIZE, 
+            maxX: GRID_END * BLOCK_SIZE,   
+            minZ: GRID_START * BLOCK_SIZE, 
+            maxZ: GRID_END * BLOCK_SIZE,   
+            padding: 10 
+        };
+        const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+        const speedDisplay = document.getElementById('speed-display');
+
+// ==========================================
+//           Arduino 連接與通訊整合
+// ==========================================
+async function connectArduino() {
+    console.log("正在嘗試連接 Arduino...");
+    try {
+        // 1. 請求連接
+        port = await navigator.serial.requestPort();
+        
+        // 2. 開啟連接 (你的設定是 115200)
+        await port.open({ baudRate: 115200 }); 
+        
+        // 3. 設定解碼器 (將二進位資料轉為字串串流)
+        const decoder = new TextDecoderStream();
+        const inputDone = port.readable.pipeTo(decoder.writable);
+        const inputStream = decoder.readable;
+        
+        // 取得讀取器 (全域變數)
+        reader = inputStream.getReader();
+
+        // 4. 啟動讀取迴圈 (背景執行)
+        readLoop(); 
+
+        console.log("Arduino 連接成功！");
+        
+    } catch (error) {
+        console.error("序列阜連接失敗:", error);
+        // 把錯誤拋出，讓 GameManager 顯示紅字
+        throw error; 
+    }
+}
+
+async function readLoop() {
+    while (true) {
+        try {
+            // 讀取資料
+            const { value, done } = await reader.read();
+            
+            if (done) {
+                console.log("讀取結束");
+                reader.releaseLock();
+                break;
+            }
+
+            if (value) {
+                // 有時候資料會連在一起，建議先 trim 去空白
+                // ★ 注意：這裡假設 Arduino 傳送的是 "B1", "B0", "SR", "SL" 這樣的字串
+                const text = value.trim(); 
+                const parsedValue = parseInt(text);
+            // ==============================
+            //      1. 類比煞車邏輯 (Analog Brake)
+            // ==============================
+            // 檢查是否為有效數字 (代表收到 A1 數值)
+            if (!isNaN(parsedValue)) {
+                
+                // --- 設定參數 ---
+                const deadZone = 100;  // 死區：數值小於 100 視為沒按 (消除雜訊)
+                const maxInput = 1000; // Arduino 最大輸入值
+
+                // --- 判斷邏輯 ---
+                if (parsedValue > deadZone) {
+                    
+                    // 1. 計算煞車力道 (0.0 ~ 1.0)
+                    // 公式：(目前數值 - 死區) / (最大值 - 死區)=算出按壓比例
+                    let brakeIntensity = (parsedValue - deadZone) / (maxInput - deadZone);
+                    
+                    // 確保不超過 1.0
+                    if (brakeIntensity > 1.0) brakeIntensity = 1.0;
+
+                    // 2. 設定按鍵狀態 (只要有踩，就視為按下)
+                    keys.ArrowDown = true;
+                    
+                    // 3. ★ 關鍵：將力道存入全域變數，讓遊戲物理引擎讀取 ★
+                    // 您的遊戲需要讀取這個數值來決定減速多快
+                    if (typeof arduinoBrakeForce !== 'undefined') {
+                        arduinoBrakeForce = brakeIntensity; 
+                    }
+                    
+                    // 4. 反應紀錄邏輯 (防止一直重複觸發)
+                    // 只有當「原本沒煞車 (arduinoBrake為false)」變成「有煞車」的那一瞬間才紀錄
+                    if (typeof arduinoBrake !== 'undefined' && arduinoBrake === false) {
+                         if (typeof gameManager !== 'undefined' && gameManager.dataCollector) {
+                            gameManager.dataCollector.recordReaction();
+                            console.log("觸發煞車反應紀錄！");
+                        }
+                    }
+                    
+                    // 更新煞車狀態旗標
+                    if (typeof arduinoBrake !== 'undefined') arduinoBrake = true;
+
+                    // Debug 用 (您可以觀察數值變化)
+                console.log(`煞車力道: ${brakeIntensity.toFixed(2)} (原始: ${parsedValue})`);
+
+                } else {
+                    // --- 數值在死區內 (視為放開煞車) ---
+                    keys.ArrowDown = false;
+                    
+                    if (typeof arduinoBrake !== 'undefined') arduinoBrake = false;
+                    if (typeof arduinoBrakeForce !== 'undefined') arduinoBrakeForce = 0;
+                }
+            }
+
+                // ==============================
+                //      2. 方向燈邏輯 (Signal)
+                // ==============================
+                
+                // 偵測：右轉 (SR = Signal Right)
+                if (text.includes("SR")) {
+                    // 只有當「上一次是置中 (SN)」，現在「變成推向右 (SR)」時才觸發一次
+                    if (lastJoyState === "SN") {
+                        rightSignalOn = !rightSignalOn; // 切換開關
+                        leftSignalOn = false;           // 關掉另一邊
+                        updateSignalVisuals();
+                        console.log(rightSignalOn ? "➡ [右燈] 開啟" : "➡ [右燈] 關閉");
+                    }
+                    lastJoyState = "SR"; // 更新狀態
+                } 
+                
+                // 偵測：左轉 (SL = Signal Left)
+                else if (text.includes("SL")) {
+                    // 只有當「上一次是置中」，現在「變成推向左」時才觸發
+                    if (lastJoyState === "SN") {
+                        leftSignalOn = !leftSignalOn;  // 切換開關
+                        rightSignalOn = false;         // 關掉另一邊
+                        updateSignalVisuals();
+                        console.log(leftSignalOn ? "⬅ [左燈] 開啟" : "⬅ [左燈] 關閉");
+                    }
+                    lastJoyState = "SL"; // 更新狀態
+                }
+                
+                // 偵測：搖桿回正 (SN = Signal Neutral)
+                else if (text.includes("SN")) {
+                    lastJoyState = "SN"; // 標記為已放開，下次推動才能再次觸發
+                }
+            }
+        } catch (error) {
+            console.error("讀取錯誤:", error);
+            break;
+        }
+    }
+}
+
+        // Three.js 初始化
+        const scene = new THREE.Scene();
+        const skyColor = 0x87CEEB;
+        scene.background = new THREE.Color(skyColor);
+        scene.fog = new THREE.Fog(skyColor, 5000, 3000); // 霧稍微調遠一點，看得到邊界
+        const camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const centerX = ((GRID_START + GRID_END) / 2) * BLOCK_SIZE;
+        const centerZ = ((GRID_START + GRID_END) / 2) * BLOCK_SIZE;
+        const topCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 10, 5000);
+        topCamera.position.set(centerX, 1300, centerZ); // Y=400 高度
+        topCamera.lookAt(centerX, 0, centerZ); // 往下看城市中心
+        // ★ 修改：調整初始相機位置到城市中心附近
+        camera.position.set(0, 1.5, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; 
+        document.body.appendChild(renderer.domElement);
+        renderer.autoClear = false;
+
+        const renderTargetLeft = new THREE.WebGLRenderTarget(1024, 512);
+        const renderTargetRight = new THREE.WebGLRenderTarget(1024, 512);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(100, 200, 100); 
+        dirLight.castShadow = true;
+        dirLight.shadow.camera.left = -500;
+        dirLight.shadow.camera.right = 500;
+        dirLight.shadow.camera.top = 500;
+        dirLight.shadow.camera.bottom = -500;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        const gameManager = new GameManager();
+        gameManager.init(scene, camera, dirLight, ambientLight);
+        gameManager.bindConnectAction(connectArduino);
+        const sceneData = {intersections: allIntersections, pedestrians: pedestrians, bounds: worldBounds};
+        const scenarioManager = new ScenarioManager(scene, camera, gameManager, sceneData);
+        const trafficJudge = new TrafficJudge(gameManager, camera, allIntersections, pedestrians);
+        window.retryGame = () => gameManager.resetGame();
+        const cityConfig = {blockSize: 300, citySize: 3  };
+        const navSystem = new NavigationSystem(gameManager, scene, renderer,camera,cityConfig);
+        navSystem.startNextGoal();
+
+        // --- 2. 材質生成函式 (保持不變) ---
+        function createBrickTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#8b5a2b'; ctx.fillRect(0, 0, 512, 512);
+            ctx.fillStyle = '#a0522d';
+            const brickW = 64, brickH = 32;
+            for(let y=0; y<512; y+=brickH+2) {
+                const offset = (y / (brickH+2)) % 2 === 0 ? 0 : brickW/2;
+                for(let x=-brickW; x<512; x+=brickW+2) {
+                    ctx.fillStyle = Math.random() > 0.8 ? '#cd5c5c' : '#a0522d';
+                    ctx.fillRect(x + offset, y, brickW, brickH);
+                }
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(50, 50);
+            return tex;
+        }
+
+        function createWindowTexture(baseColorHex) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = baseColorHex; ctx.fillRect(0, 0, 128, 256);
+            const rows = 8, cols = 4, pad = 6;
+            const w = (128 - pad * (cols + 1)) / cols;
+            const h = (256 - pad * (rows + 1)) / rows;
+            for(let i=0; i<cols; i++) {
+                for(let j=0; j<rows; j++) {
+                    const rand = Math.random();
+                    if(rand > 0.9) ctx.fillStyle = '#ffffaa'; 
+                    else if(rand > 0.7) ctx.fillStyle = '#445566'; 
+                    else ctx.fillStyle = '#222222';
+                    ctx.fillRect(pad + i * (w + pad), pad + j * (h + pad), w, h);
+                }
+            }
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const roadMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); 
+        const yellowLineMat = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
+        const redLineMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const brickMat = new THREE.MeshLambertMaterial({ map: createBrickTexture() });
+        const sidewalkMat = new THREE.MeshPhongMaterial({ color: 0x006400 });
+
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), brickMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.1;
+        scene.add(ground);
+
+        // --- 3. 物件生成邏輯 ---
+        const buildingColors = ['#8899aa', '#aa8899', '#99aa88', '#aaaaaa', '#777777'];
+        function createBuilding(x, z) {
+            const height = 20 + Math.random() * 60;
+            const width = 15 + Math.random() * 10;
+            const geo = new THREE.BoxGeometry(width, height, width);
+            const colorHex = buildingColors[Math.floor(Math.random() * buildingColors.length)];
+            const wallMat = new THREE.MeshPhongMaterial({ map: createWindowTexture(colorHex) });
+            const roofMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+            const materials = [wallMat, wallMat, roofMat, roofMat, wallMat, wallMat];
+            const building = new THREE.Mesh(geo, materials);
+            building.position.set(x, height / 2, z);
+            building.castShadow = true;
+            building.receiveShadow = true;
+            scene.add(building);
+        }
+//交通號誌(紅綠燈)
+        function createTrafficLight(x, z, rotationY, isNorthSouth) {
+            const group = new THREE.Group();
+            group.position.set(x, 0, z);
+            group.rotation.y = rotationY;
+            const poleGeo = new THREE.CylinderGeometry(0.3, 0.3, 10, 16);
+            const poleMat = new THREE.MeshLambertMaterial({ color: 0x666666 });
+            const pole = new THREE.Mesh(poleGeo, poleMat);
+            pole.position.set(0, 5, 0); pole.castShadow = true;
+            group.add(pole);
+            const armGeo = new THREE.BoxGeometry(6, 0.3, 0.3);
+            const arm = new THREE.Mesh(armGeo, poleMat);
+            arm.position.set(3, 9, 0); arm.castShadow = true;
+            group.add(arm);
+            const boxGeo = new THREE.BoxGeometry(3.2, 1, 0.6);
+            const boxMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+            const box = new THREE.Mesh(boxGeo, boxMat);
+            box.position.set(5, 9, 0); box.castShadow = true; group.add(box);
+            const lightGeo = new THREE.SphereGeometry(0.35, 16, 16);
+            const redMat = new THREE.MeshBasicMaterial({ color: 0x330000 });
+            const yellowMat = new THREE.MeshBasicMaterial({ color: 0x333300 });
+            const greenMat = new THREE.MeshBasicMaterial({ color: 0x003300 });
+            const rL = new THREE.Mesh(lightGeo, redMat); rL.position.set(-1, 0, 0.35); box.add(rL);
+            const yL = new THREE.Mesh(lightGeo, yellowMat); yL.position.set(0, 0, 0.35); box.add(yL);
+            const gL = new THREE.Mesh(lightGeo, greenMat); gL.position.set(1, 0, 0.35); box.add(gL);
+            const rL_back = new THREE.Mesh(lightGeo, redMat); rL_back.position.set(1, 0, -0.35); box.add(rL_back);
+            const yL_back = new THREE.Mesh(lightGeo, yellowMat); yL_back.position.set(0, 0, -0.35); box.add(yL_back);
+            const gL_back = new THREE.Mesh(lightGeo, greenMat); gL_back.position.set(-1, 0, -0.35); box.add(gL_back);
+            scene.add(group);
+            const lightObj = { red: redMat, yellow: yellowMat, green: greenMat };
+            if (isNorthSouth) trafficLightsNS.push(lightObj);
+            else trafficLightsEW.push(lightObj);
+        }
+//斑馬線(十字路口)
+        function createZebraCrossing(x, z, isVertical) {
+            const stripes = 6;
+            const width = ROAD_WIDTH; const stripeWidth = width / stripes / 2;
+            const group = new THREE.Group(); group.position.set(x, 0.04, z);
+            if (!isVertical) group.rotation.y = Math.PI / 2;
+            const stripeGeo = new THREE.PlaneGeometry(stripeWidth, 3);
+            for(let i = 0; i < stripes; i++) {
+                const stripe = new THREE.Mesh(stripeGeo, lineMat);
+                stripe.position.x = (i - stripes/2 + 0.5) * (stripeWidth * 2); 
+                stripe.rotation.x = -Math.PI / 2; group.add(stripe);
+            }
+            scene.add(group);
+        }
+//停止線
+        function createStopLine(x, z, isVertical) {
+            const stopLineGeo = new THREE.PlaneGeometry(ROAD_WIDTH, 0.8);
+            const stopLine = new THREE.Mesh(stopLineGeo, lineMat);
+            stopLine.position.set(x, 0.04, z); stopLine.rotation.x = -Math.PI / 2;
+            if (!isVertical) stopLine.rotation.z = Math.PI / 2;
+            scene.add(stopLine);
+        }
+
+        const hydrantMat = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+        const hydrantBodyGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.8, 8); 
+        const hydrantCapGeo = new THREE.SphereGeometry(0.22, 8, 8);
+        const hydrantNozzleGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.6, 6);
+        const utilityBaseMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+        const utilityBoxMat = new THREE.MeshLambertMaterial({ color: 0x2E8B57 });
+        const utilityBaseGeo = new THREE.BoxGeometry(1.2, 0.2, 1.2);
+        const utilityBoxGeo = new THREE.BoxGeometry(1.0, 1.4, 1.0);
+//消防栓
+        function createFireHydrant() {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(hydrantBodyGeo, hydrantMat);
+            body.position.y = 0.4; group.add(body);
+            const cap = new THREE.Mesh(hydrantCapGeo, hydrantMat);
+            cap.position.y = 0.8; group.add(cap);
+            const nozzle = new THREE.Mesh(hydrantNozzleGeo, hydrantMat);
+            nozzle.rotation.z = Math.PI / 2; nozzle.position.y = 0.55; group.add(nozzle);
+            return group;
+        }
+//變電箱
+        function createUtilityBox() {
+            const group = new THREE.Group();
+            const base = new THREE.Mesh(utilityBaseGeo, utilityBaseMat);
+            base.position.y = 0.1; group.add(base);
+            const box = new THREE.Mesh(utilityBoxGeo, utilityBoxMat);
+            box.position.y = 0.8; group.add(box);
+            return group;
+        }
+
+        // ★ 修改：增加 boundarySide 參數，用於控制哪一邊不生成建築
+        // boundarySide: 0=無邊界, 1=正向不生成(如下方/右方), -1=負向不生成(如上方/左方)
+        function createRoadSegment(x, z, isVertical, boundarySide = 0) {
+            const length = BLOCK_SIZE;
+            const roadGeo = new THREE.PlaneGeometry(isVertical ? ROAD_WIDTH : length, isVertical ? length : ROAD_WIDTH);
+            const road = new THREE.Mesh(roadGeo, roadMat);
+            road.rotation.x = -Math.PI / 2; road.position.set(x, 0.01, z); scene.add(road);
+
+            const edgeLineWidth = 0.4;
+            const edgeOffset = ROAD_WIDTH / 2 - 0.8; 
+            const edgeLineLength = length - 25;
+            const edgeLineGeo = new THREE.PlaneGeometry(isVertical ? edgeLineWidth : edgeLineLength, isVertical ? edgeLineLength : edgeLineWidth);
+            const edge1 = new THREE.Mesh(edgeLineGeo, redLineMat);
+            edge1.rotation.x = -Math.PI / 2;
+            edge1.position.set(isVertical ? x - edgeOffset : x, 0.02, isVertical ? z : z - edgeOffset);
+            scene.add(edge1);
+            const edge2 = new THREE.Mesh(edgeLineGeo, redLineMat);
+            edge2.rotation.x = -Math.PI / 2;
+            edge2.position.set(isVertical ? x + edgeOffset : x, 0.02, isVertical ? z : z + edgeOffset);
+            scene.add(edge2);
+
+            // 人行道
+            const swLength = length - ROAD_WIDTH;
+            const swGeo = new THREE.PlaneGeometry(isVertical ? SW_WIDTH : swLength, isVertical ? swLength : SW_WIDTH);
+            const sw1 = new THREE.Mesh(swGeo, sidewalkMat);
+            sw1.rotation.x = -Math.PI / 2;
+            sw1.position.set(isVertical ? x - SIDEWALK_OFFSET : x, 0.015, isVertical ? z : z - SIDEWALK_OFFSET);
+            scene.add(sw1);
+            const sw2 = new THREE.Mesh(swGeo, sidewalkMat);
+            sw2.rotation.x = -Math.PI / 2;
+            sw2.position.set(isVertical ? x + SIDEWALK_OFFSET : x, 0.015, isVertical ? z : z + SIDEWALK_OFFSET); 
+            scene.add(sw2);
+
+            // 道路中線
+            const dashLen = 3;
+            const gapLen = 3;   
+            const segmentLen = dashLen + gapLen;
+            const totalLen = length - 20;
+            const numDashes = Math.floor(totalLen / segmentLen);
+            const startPos = -totalLen / 2 + dashLen / 2;
+            const dashGeo = new THREE.PlaneGeometry(isVertical ? 0.6 : dashLen, isVertical ? dashLen : 0.6);
+            for (let i = 0; i < numDashes; i++) {
+                const dash = new THREE.Mesh(dashGeo, yellowLineMat);
+                dash.rotation.x = -Math.PI / 2;
+                const currentPos = startPos + i * segmentLen;
+                if (isVertical) dash.position.set(x, 0.04, z + currentPos);
+                else dash.position.set(x + currentPos, 0.04, z);
+                scene.add(dash);
+            }
+
+            // 生成小物件 (消防栓等)
+            const propOffsetDist = SIDEWALK_OFFSET - 2;
+            for (let d = -length / 2 + 20; d < length / 2 - 20; d += 30) {
+                [1, -1].forEach(side => {
+                    // ★ 如果這是一個邊界道路，且這一側是「外側」，則不生成物件
+                    if (boundarySide !== 0) {
+                         if (boundarySide === 1 && side === 1) return; // 正向邊界，正向側不生成
+                         if (boundarySide === -1 && side === -1) return; // 負向邊界，負向側不生成
+                    }
+
+                    const rand = Math.random();
+                    let prop = null;
+                    if (rand < 0.005) {
+                        prop = createFireHydrant();
+                    } else if (rand > 0.005 && rand < 0.01) {
+                        prop = createUtilityBox();
+                        prop.rotation.y = Math.random() * Math.PI; 
+                    }
+                    if (prop) {
+                        const px = isVertical ? x + propOffsetDist * side : x + d;
+                        const pz = isVertical ? z + d : z + propOffsetDist * side;
+                        prop.position.set(px, 0, pz);
+                        scene.add(prop);
+                    }
+                });
+            }            
+
+            // 生成建築
+            const cornerBuffer = 75;
+            for (let d = -length/2 + cornerBuffer; d < length/2 - cornerBuffer; d += 50) {
+                if (Math.random() > 0.3) {
+                    const buildingOffset = SIDEWALK_OFFSET + SW_WIDTH/2 + 15;
+                    
+                    // Side 1 (正向側: 右或下)
+                    if (boundarySide !== 1) { // 除非是外邊界
+                        const bx = isVertical ? x + buildingOffset : x + d;
+                        const bz = isVertical ? z + d : z + buildingOffset;
+                        createBuilding(bx, bz);
+                    }
+
+                    // Side 2 (負向側: 左或上)
+                    if (boundarySide !== -1) { // 除非是外邊界
+                        const bx2 = isVertical ? x - buildingOffset : x + d;
+                        const bz2 = isVertical ? z + d : z - buildingOffset;
+                        createBuilding(bx2, bz2);
+                    }
+                }
+            }
+        }
+
+        // --- 4. 地圖生成 (大幅修改) ---
+        // ★ 修改：建立長牆壁的函式，用來包圍城市
+        function createLongBarrier(x, z, isVertical) {
+            // 長度是一個 BLOCK_SIZE，高度 4
+            const length = BLOCK_SIZE;
+            const thick = 2;
+            const height = 4;
+            const barrierGeo = new THREE.BoxGeometry(isVertical ? thick : length, height, isVertical ? length : thick);
+            const barrierMat = new THREE.MeshPhongMaterial({ color: 0xFFAA00, stripe: true }); // 橘色牆
+            const barrier = new THREE.Mesh(barrierGeo, barrierMat);
+            barrier.position.set(x, height/2, z);
+            scene.add(barrier);
+        }
+
+        function createIntersection(x, z) {
+            const size = ROAD_WIDTH;
+            const intersectGeo = new THREE.PlaneGeometry(size, size);
+            const intersect = new THREE.Mesh(intersectGeo, roadMat);
+            intersect.rotation.x = -Math.PI / 2; intersect.position.set(x, 0.02, z);
+            scene.add(intersect);
+
+            const patchLen = 10; 
+            const patchGeoV = new THREE.PlaneGeometry(size, size + patchLen * 2);
+            const patchV = new THREE.Mesh(patchGeoV, roadMat);
+            patchV.rotation.x = -Math.PI / 2; patchV.position.set(x, 0.015, z); scene.add(patchV);
+            const patchGeoH = new THREE.PlaneGeometry(size + patchLen * 2, size); 
+            const patchH = new THREE.Mesh(patchGeoH, roadMat);
+            patchH.rotation.x = -Math.PI / 2; patchH.position.set(x, 0.015, z); scene.add(patchH);
+
+            const zebraOffset = SIDEWALK_OFFSET;
+            const stopLineOffset = zebraOffset + 10;
+            createZebraCrossing(x, z - zebraOffset, true); 
+            createZebraCrossing(x, z + zebraOffset, true);
+            createZebraCrossing(x - zebraOffset, z, false); 
+            createZebraCrossing(x + zebraOffset, z, false);
+            createStopLine(x, z - stopLineOffset, true);  
+            createStopLine(x, z + stopLineOffset, true);
+            createStopLine(x - stopLineOffset, z, false); 
+            createStopLine(x + stopLineOffset, z, false);
+            const longDist = stopLineOffset;
+            const latDist = ROAD_WIDTH / 2 + 5; 
+            createTrafficLight(x - latDist, z - longDist, 0, true);
+            createTrafficLight(x + latDist, z + longDist, Math.PI, true);      
+            createTrafficLight(x - longDist, z + latDist, Math.PI / 2, false);
+            createTrafficLight(x + longDist, z - latDist, -Math.PI / 2, false);
+            allIntersections.push({ x: x, z: z });
+        }
+
+        // ★ 修改：主要的地圖生成迴圈
+        for (let i = GRID_START; i <= GRID_END; i++) {
+            for (let j = GRID_START; j <= GRID_END; j++) {
+                const x = i * BLOCK_SIZE;
+                const z = j * BLOCK_SIZE;
+
+                // 每個格點都建立路口
+                createIntersection(x, z);
+
+                // --- 建立道路 ---
+                // 橫向道路 (East-West)
+                if (i < GRID_END) {
+                    // 判斷是否為最北邊或最南邊的邊界道路
+                    let bSide = 0;
+                    if (j === GRID_START) bSide = -1; // 最北邊 (Top)，負向不生成建築(上方)
+                    if (j === GRID_END) bSide = 1;    // 最南邊 (Bottom)，正向不生成建築(下方)
+                    createRoadSegment(x + BLOCK_SIZE / 2, z, false, bSide);
+                }
+
+                // 縱向道路 (North-South)
+                if (j < GRID_END) {
+                    // 判斷是否為最西邊或最東邊的邊界道路
+                    let bSide = 0;
+                    if (i === GRID_START) bSide = -1; // 最左邊，左側不生成
+                    if (i === GRID_END) bSide = 1;    // 最右邊，右側不生成
+                    createRoadSegment(x, z + BLOCK_SIZE / 2, true, bSide);
+                }
+            }
+        }
+        function createCityWalls() {
+            // 1. 計算城市的邊界座標
+            const minIndex = GRID_START;
+            const maxIndex = GRID_END;
+            const blockSize = BLOCK_SIZE;
+            
+            // 牆壁要往外推多少 (道路寬度 + 一點緩衝)
+            const offset = ROAD_WIDTH + 5; 
+
+            const minX = minIndex * blockSize; // 最左座標
+            const maxX = maxIndex * blockSize; // 最右座標
+            const minZ = minIndex * blockSize; // 最上座標
+            const maxZ = maxIndex * blockSize; // 最下座標
+
+            // 2. 計算牆壁總長度
+            // 總長度 = (最右 - 最左) + (兩邊的 offset) + (牆壁厚度，確保角落交叉重疊)
+            const totalWidth = (maxX - minX) + (offset * 2) + 4;
+            const totalDepth = (maxZ - minZ) + (offset * 2) + 4;
+
+            const wallHeight = 15; // 牆壁高度
+            const wallThick = 2;   // 牆壁厚度
+
+            // 橫向牆壁幾何 (長度為 totalWidth)
+            const geoH = new THREE.BoxGeometry(totalWidth, wallHeight, wallThick);
+            // 縱向牆壁幾何 (長度為 totalDepth)
+            const geoV = new THREE.BoxGeometry(wallThick, wallHeight, totalDepth);
+            
+            const wallMat = new THREE.MeshPhongMaterial({ color: 0xFFAA00 }); 
+
+            // 3. 建立四面牆
+            
+            // 北牆 (Top)
+            const wallTop = new THREE.Mesh(geoH, wallMat);
+            // 位置：X置中, Z在最上面再往外推
+            wallTop.position.set((minX + maxX) / 2, wallHeight / 2, minZ - offset);
+            scene.add(wallTop);
+
+            // 南牆 (Bottom)
+            const wallBottom = new THREE.Mesh(geoH, wallMat);
+            wallBottom.position.set((minX + maxX) / 2, wallHeight / 2, maxZ + offset);
+            scene.add(wallBottom);
+
+            // 西牆 (Left)
+            const wallLeft = new THREE.Mesh(geoV, wallMat);
+            // 位置：Z置中, X在最左邊再往外推
+            wallLeft.position.set(minX - offset, wallHeight / 2, (minZ + maxZ) / 2);
+            scene.add(wallLeft);
+
+            // 東牆 (Right)
+            const wallRight = new THREE.Mesh(geoV, wallMat);
+            wallRight.position.set(maxX + offset, wallHeight / 2, (minZ + maxZ) / 2);
+            scene.add(wallRight);
+        }
+
+        // ★ 記得執行它！
+        createCityWalls();
+
+        // --- 5. 行人系統 ---
+        function createPedestrianMesh() {
+            const group = new THREE.Group();
+            const shirtColors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0x00ffff, 0xff00ff, 0xffffff, 0x111111];
+            const color = shirtColors[Math.floor(Math.random() * shirtColors.length)];
+            const bodyGeo = new THREE.CylinderGeometry(0.5, 0.5, 1.7, 8);
+            const bodyMat = new THREE.MeshLambertMaterial({ color: color });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = 0.85; group.add(body);
+            const headGeo = new THREE.SphereGeometry(0.35, 12, 12);
+            const headMat = new THREE.MeshLambertMaterial({ color: 0xffccaa });
+            const head = new THREE.Mesh(headGeo, headMat);
+            head.position.y = 1.9; group.add(head);
+            group.castShadow = true;
+            return group;
+        }
+
+        function initPedestrians() {
+            for (let i = 0; i < PEDESTRIAN_COUNT; i++) {
+                const mesh = createPedestrianMesh();
+                // 隨機選一個合法的格子
+                let iGrid = Math.floor(Math.random() * (GRID_END - GRID_START) + GRID_START);
+                let jGrid = Math.floor(Math.random() * (GRID_END - GRID_START) + GRID_START);
+                
+                // 簡單修正：避免生成在最外圍的牆壁外，稍微往內縮一點
+                if(iGrid < GRID_START) iGrid = GRID_START;
+                if(iGrid >= GRID_END) iGrid = GRID_END - 1;
+
+                let cx = iGrid * BLOCK_SIZE + BLOCK_SIZE/2; // 移到街區中心
+                let cz = jGrid * BLOCK_SIZE + BLOCK_SIZE/2;
+
+                let isVertical = Math.random() > 0.5;
+                let side = Math.random() > 0.5 ? 1 : -1; 
+                let px, pz, dx, dz;
+
+                // 讓行人生成在該街區周圍的人行道上，而不是絕對座標亂數
+                // 這是一個簡化的生成邏輯，保證行人在城市內
+                if (isVertical) {
+                    px = cx + (BLOCK_SIZE/2 - SIDEWALK_OFFSET) * side; // 靠近路邊
+                    pz = cz + (Math.random() - 0.5) * BLOCK_SIZE * 0.8;
+                    dx = 0; dz = Math.random() > 0.5 ? 1 : -1;
+                } else {
+                    px = cx + (Math.random() - 0.5) * BLOCK_SIZE * 0.8;
+                    pz = cz + (BLOCK_SIZE/2 - SIDEWALK_OFFSET) * side;
+                    dx = Math.random() > 0.5 ? 1 : -1; dz = 0;
+                }
+                mesh.position.set(px, 0.2, pz);
+                if (dx !== 0) mesh.rotation.y = dx > 0 ? Math.PI/2 : -Math.PI/2;
+                if (dz !== 0) mesh.rotation.y = dz > 0 ? 0 : Math.PI;
+                scene.add(mesh);
+                const baseSpeed = 0.15+0.08 + Math.random() * 0.05;
+                pedestrians.push({
+                    mesh: mesh,
+                    speed:baseSpeed, 
+                    dir: new THREE.Vector3(dx, 0, dz),
+                    cooldown: 0,
+                    waitTime: 0 
+                });
+            }
+        }
+        initPedestrians();
+
+        function updatePedestrians() {
+            // ★ 修改邊界判定，讓行人也不會走到牆外面
+            const minMap = GRID_START * BLOCK_SIZE;
+            const maxMap = GRID_END * BLOCK_SIZE;
+            
+            const trafficCycle = frameCount % 1200;
+            const isNSGreen = trafficCycle < 600;
+            const isNSYellow = trafficCycle >= 600 && trafficCycle < 700;
+            const isEWGreen = trafficCycle >= 700 && trafficCycle < 1100;
+            const isEWYellow = trafficCycle >= 1100;
+
+            pedestrians.forEach(ped => {
+                if (ped.waitTime > 0) {
+                    ped.waitTime--;
+                    return;
+                }
+                
+                let currentMoveSpeed = ped.speed; 
+                const pos = ped.mesh.position;
+                let localX = pos.x % BLOCK_SIZE;
+                let localZ = pos.z % BLOCK_SIZE;
+                // 簡單的正規化
+                if (localX > BLOCK_SIZE/2) localX -= BLOCK_SIZE;
+                if (localX < -BLOCK_SIZE/2) localX += BLOCK_SIZE;
+                if (localZ > BLOCK_SIZE/2) localZ -= BLOCK_SIZE;
+                if (localZ < -BLOCK_SIZE/2) localZ += BLOCK_SIZE;
+
+                const roadBoundary = ROAD_WIDTH / 2 + 2; 
+
+                if (ped.dir.z !== 0) { 
+                    const inIntersection = Math.abs(localZ) < roadBoundary;
+                    const atRoadEdge = Math.abs(localZ) >= roadBoundary - 1 && Math.abs(localZ) <= roadBoundary + 1;
+                    const isEntering = (ped.dir.z > 0 && localZ < 0) || (ped.dir.z < 0 && localZ > 0);
+                    if (atRoadEdge && !inIntersection && isEntering) { 
+                        if (!isNSGreen && !isNSYellow) currentMoveSpeed = 0;
+                    } else if (inIntersection) {
+                        if (isNSYellow) currentMoveSpeed = ped.speed * 2.5;
+                    }
+                } 
+                else if (ped.dir.x !== 0) { 
+                    const inIntersection = Math.abs(localX) < roadBoundary;
+                    const atRoadEdge = Math.abs(localX) >= roadBoundary - 1 && Math.abs(localX) <= roadBoundary + 1;
+                    const isEntering = (ped.dir.x > 0 && localX < 0) || (ped.dir.x < 0 && localX > 0);
+                    if (atRoadEdge && !inIntersection && isEntering) {
+                        if (!isEWGreen && !isEWYellow) currentMoveSpeed = 0;
+                    } else if (inIntersection) {
+                        if (isEWYellow) currentMoveSpeed = ped.speed * 2.5;
+                    }
+                }
+                ped.mesh.position.add(ped.dir.clone().multiplyScalar(currentMoveSpeed));
+                if (ped.cooldown > 0) ped.cooldown--;
+                
+                // 簡單邊界檢查
+                if (pos.x < minMap + 20 || pos.x > maxMap - 20 || pos.z < minMap + 20 || pos.z > maxMap - 20) {
+                     ped.dir.negate();
+                     ped.mesh.rotation.y += Math.PI;
+                     ped.cooldown = 120;
+                }
+            });
+        }
+
+        // --- 6. 駕駛座與車輛 ---
+        const cockpitGroup = new THREE.Group();
+        camera.add(cockpitGroup); 
+        scene.add(camera);
+        cockpitGroup.scale.set(0.8, 0.8, 0.8)
+        const SEAT_OFFSET = 0.2; 
+        
+        const paintColor = 0x888888;
+        const bodyMatCar = new THREE.MeshPhongMaterial({ color: paintColor, shininess: 60 });
+        const glassMat = new THREE.MeshPhongMaterial({ color: 0x000000, opacity: 0.15, transparent: true, shininess: 100 });
+        const trimMat = new THREE.MeshLambertMaterial({ color: 0x111111 }); 
+
+        const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.8, 4.0), bodyMatCar);
+        chassis.position.set(0, -0.7, 0.5);
+        cockpitGroup.add(chassis);
+        
+        const hood = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.05, 1.0), bodyMatCar);
+        hood.position.set(0, -0.5, -1.3); cockpitGroup.add(hood);
+        hood.rotation.x = -0.2
+
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.05, 1.5), bodyMatCar);
+        roof.position.set(0, 0.35, 0.2); cockpitGroup.add(roof);
+        const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.55, 0.02), glassMat);
+        windshield.position.set(0, 0.05, -0.6); windshield.rotation.x = 0.35; cockpitGroup.add(windshield);
+        const pillarGeo = new THREE.BoxGeometry(0.08, 0.6, 0.08);
+        const leftPillar = new THREE.Mesh(pillarGeo, bodyMatCar);
+        leftPillar.position.set(-0.65, 0.05, -0.55); leftPillar.rotation.x = 0.35;
+        leftPillar.rotation.z = -0.1; cockpitGroup.add(leftPillar);
+        const rightPillar = new THREE.Mesh(pillarGeo, bodyMatCar);
+        rightPillar.position.set(0.65, 0.05, -0.55); rightPillar.rotation.x = 0.35; rightPillar.rotation.z = 0.1; cockpitGroup.add(rightPillar);
+        const MIRROR_Y = -0.15; const MIRROR_Z = -0.42; const CAM_X = 1.7; 
+        const mirrorCamLeft = new THREE.PerspectiveCamera(30, 1.8, 0.1, 1000);
+        mirrorCamLeft.position.set(-CAM_X, MIRROR_Y, MIRROR_Z); mirrorCamLeft.rotation.y = Math.PI - 0.33; mirrorCamLeft.rotation.x = -0.1; cockpitGroup.add(mirrorCamLeft);
+        const mirrorCamRight = new THREE.PerspectiveCamera(30, 1.8, 0.1, 1000);
+        mirrorCamRight.position.set(CAM_X, MIRROR_Y, MIRROR_Z); mirrorCamRight.rotation.y = Math.PI + 0.33; mirrorCamRight.rotation.x = -0.1; cockpitGroup.add(mirrorCamRight);
+
+        const MODEL_X = 0.75;
+        function createBigMirror(isLeft, renderTarget) {
+            const group = new THREE.Group();
+            const caseGeo = new THREE.BoxGeometry(0.35, 0.22, 0.12);
+            const mirrorCase = new THREE.Mesh(caseGeo, trimMat); group.add(mirrorCase);
+            const glassGeo = new THREE.PlaneGeometry(0.33, 0.20);
+            const glassMat = new THREE.MeshBasicMaterial({ map: renderTarget.texture });
+            const glass = new THREE.Mesh(glassGeo, glassMat); glass.position.z = 0.07; glass.scale.x = -1;
+            group.add(glass);
+            const stem = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.08), trimMat); stem.position.set(isLeft ? 0.18 : -0.18, 0, -0.02); group.add(stem);
+            return group;
+        }
+        const leftMirror = createBigMirror(true, renderTargetLeft); 
+        leftMirror.position.set(-MODEL_X, MIRROR_Y, MIRROR_Z); 
+        leftMirror.rotation.y = 0.5;
+        leftMirror.scale.set(0.7, 0.7, 0.7); 
+        cockpitGroup.add(leftMirror);
+        
+        const rightMirror = createBigMirror(false, renderTargetRight); 
+        rightMirror.position.set(MODEL_X, MIRROR_Y, MIRROR_Z); 
+        rightMirror.rotation.y = -0.75; 
+        rightMirror.scale.set(0.7, 0.7, 0.7);
+        cockpitGroup.add(rightMirror);
+        const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.04, 16, 50), new THREE.MeshLambertMaterial({ color: 0x000000 }));
+        wheel.position.set(-0.2, -0.35, -0.55); wheel.rotation.x = -0.2;
+        cockpitGroup.add(wheel);
+        cockpitGroup.position.x = SEAT_OFFSET;
+
+        // --- 7. 控制與監聽事件 (整合版) ---
+// ==========================================
+//           輔助函式區域
+// ==========================================
+
+function updateSignalVisuals() {
+    if (leftSignalOn) signalLeftElem.classList.add('active');
+    else signalLeftElem.classList.remove('active');
+    
+    if (rightSignalOn) signalRightElem.classList.add('active'); 
+    else signalRightElem.classList.remove('active');
+}
+
+function updateGearUI(gear) {
+    // 1. 定義所有檔位
+    const gears = ['P', 'R', 'N', 'D'];
+    
+    // 2. 清除所有檔位樣式
+    gears.forEach(g => {
+        const el = document.getElementById('gear-' + g);
+        if (el) {
+            el.classList.remove('active'); 
+            el.style.color = ''; 
+        }
+    });
+
+    // 3. 設定目前檔位樣式
+    const activeEl = document.getElementById('gear-' + gear);
+    if (activeEl) {
+        activeEl.classList.add('active'); 
+        if (gear === 'R') {
+            activeEl.style.color = '#ff3333'; 
+        }
+    }
+}
+
+// ==========================================
+//           按鍵監聽區域 (核心修正)
+// ==========================================
+
+let useTopCamera = false;
+
+window.addEventListener('keydown', (e) => { 
+    if(keys.hasOwnProperty(e.code)) keys[e.code] = true; 
+
+    // --- 1. 方向燈控制 (隨時都可以按) ---
+    if (e.code === 'KeyZ') { 
+        leftSignalOn = !leftSignalOn; 
+        if (leftSignalOn) {
+            rightSignalOn = false;
+            hasStartedTurn = false; // ★ 重置轉彎狀態
+        }
+        updateSignalVisuals(); 
+    }
+
+    if (e.code === 'KeyC') { 
+        rightSignalOn = !rightSignalOn; 
+        if (rightSignalOn) {
+            leftSignalOn = false;
+            hasStartedTurn = false; // ★ 重置轉彎狀態
+        }
+        updateSignalVisuals(); 
+    }
+    
+    // --- 2. 視角切換 (隨時都可以按) ---
+    if (e.code === 'KeyT') {
+        useTopCamera = !useTopCamera;
+        console.log("切換視角: " + (useTopCamera ? "上帝視角" : "駕駛視角"));
+    }
+
+    // --- 3. 換檔控制 (只有車速很慢時才能按) ---
+    // 注意：這裡是用來換 R 檔和 D 檔的，不要放方向燈邏輯
+    if (speed < 0.1) { 
+        // 換 R 檔
+        if (e.key === 'r' || e.key === 'R') {
+            currentGear = 'R';
+            updateGearUI('R');
+        }
+        // 換 D 檔
+        if (e.key === 'd' || e.key === 'D') {
+            currentGear = 'D';
+            updateGearUI('D');
+        }
+    }
+});
+
+window.addEventListener('keyup', (e) => { 
+    if(keys.hasOwnProperty(e.code)) keys[e.code] = false; 
+});
+
+        // --- 8. 遊戲主邏輯循環 ---
+        function updateTrafficLights() {
+            const trafficCycle = frameCount % 1200;
+            let nsState = 'red';
+            if (trafficCycle < 600) nsState = 'green';
+            else if (trafficCycle < 700) nsState = 'yellow';
+            currentNSState = nsState;
+            trafficLightsNS.forEach(light => {
+                if (nsState === 'green') {
+                    light.red.color.set(0x330000); light.yellow.color.set(0x333300); light.green.color.set(0x00ff00);
+                } else if (nsState === 'yellow') {
+                    light.red.color.set(0x330000); light.yellow.color.set(0xffff00); light.green.color.set(0x003300);
+                } else {
+                    light.red.color.set(0xff0000); light.yellow.color.set(0x333300); light.green.color.set(0x003300);
+                }
+            });
+            let ewState = 'red';
+            if (trafficCycle >= 700 && trafficCycle < 1100) ewState = 'green';
+            else if (trafficCycle >= 1100) ewState = 'yellow';
+            currentEWState = ewState;
+            trafficLightsEW.forEach(light => {
+                if (ewState === 'green') {
+                    light.red.color.set(0x330000); light.yellow.color.set(0x333300); light.green.color.set(0x00ff00);
+                } else if (ewState === 'yellow') {
+                    light.red.color.set(0x330000); light.yellow.color.set(0xffff00); light.green.color.set(0x003300);
+                } else {
+                    light.red.color.set(0xff0000); light.yellow.color.set(0x333300); light.green.color.set(0x003300);
+                }
+            });
+        }
+
+        function isOnRoad(x, z) {
+            const nearestX = Math.round(x / BLOCK_SIZE) * BLOCK_SIZE;
+            const nearestZ = Math.round(z / BLOCK_SIZE) * BLOCK_SIZE;
+            const distX = Math.abs(x - nearestX);
+            const distZ = Math.abs(z - nearestZ);
+            const halfRoad = ROAD_WIDTH / 2;
+            return (distX < halfRoad) || (distZ < halfRoad);
+        }
+        
+function animate() {
+    // 1. 這一行一定要放在最前面
+    requestAnimationFrame(animate);
+
+    const currentTime = performance.now();
+    const deltaTime = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
+    const dt = deltaTime;
+
+    // 2. 只有在「遊戲已開始」且「正在運行」時，才計算物理移動
+    if (gameManager && gameManager.hasStarted && gameManager.isRunning) {
+        
+        // =============================================================
+        // [A] 輸入與物理移動計算 (保持原本手感)
+        // =============================================================
+
+        // 速度控制
+        if (keys.ArrowUp) {
+            if (speed < maxSpeed) speed += 0.01;
+        }
+        if (keys.ArrowDown) {
+            // 如果有 arduinoBrakeForce 就用它，沒有的話預設為 1 (鍵盤操作時)
+            let intensity = (typeof arduinoBrakeForce !== 'undefined') ? arduinoBrakeForce : 1;
+            
+            // 減速量 = 最大煞車力 * 目前踩踏深度
+            // 例如：輕踩 (0.2) -> 減速 0.02*0.2，重踩 (1.0) -> 減速 1*0.02
+            speed -= (0.02* intensity); 
+        }
+        if (speed < 0) speed = 0;
+
+let targetSteer = 0;
+        if (keys.ArrowLeft) targetSteer = 0.5;
+        else if (keys.ArrowRight) targetSteer = -0.5;
+
+        // 2. 讓現在的角度「慢慢追上」目標角度
+        // 0.1 是速度係數 (0.05 ~ 0.2 之間)，越小越滑順，越大反應越快
+        const smoothSpeed = 0.1; 
+        
+        wheel.rotation.z += (targetSteer - wheel.rotation.z) * smoothSpeed;
+
+        // 輪胎震動效果
+        if (speed > 0.01) {
+            wheel.position.y = -0.35 + Math.sin(Date.now() * 0.02) * 0.001;
+        }
+
+        // 轉向與移動 (鏡頭)
+        const direction = (currentGear === 'D') ? 1 : -1;
+        const turnSensitivity = 0.02;
+
+        if (speed > 0.001) {
+            if (keys.ArrowLeft) camera.rotation.y += turnSensitivity * direction;
+            else if (keys.ArrowRight) camera.rotation.y -= turnSensitivity * direction;
+        }
+
+        // 更新車輛位置
+        const oldPos = camera.position.clone();
+        camera.translateZ(-speed * direction);
+
+        // =============================================================
+        // [B] 環境與交通更新
+        // =============================================================
+        
+        if (typeof scenarioManager !== 'undefined') {
+            scenarioManager.update(dt, currentNSState, currentEWState);
+        }
+        frameCount++;
+        updateTrafficLights();
+        updatePedestrians();
+
+        // =============================================================
+        // [C] ★★★ 核心整合區：裁判與數據收集 ★★★
+        // =============================================================
+        
+        // 1. 打包玩家的所有輸入狀態
+        const inputs = {
+            steering: wheel.rotation.z,     // 方向盤角度
+            leftSignal: leftSignalOn,       // 左燈狀態
+            rightSignal: rightSignalOn,     // 右燈狀態
+            isBraking: keys.ArrowDown || (typeof arduinoBrake !== 'undefined' && arduinoBrake) // 煞車狀態
+        };
+
+        // 2. 餵給 DataCollector (只負責純物理計算：急煞、蛇行、超速)
+        // update(速度km/h, 時間差, 方向盤角度)
+        const currentSpeedKmh = Math.floor(speed * 100);
+        gameManager.dataCollector.update(
+            currentSpeedKmh, 
+            deltaTime, 
+            wheel.rotation.z
+        );
+        
+        // 3. 餵給 TrafficJudge (負責規則判定：逆向、沒打燈、反應時間)
+        if (trafficJudge) {
+            trafficJudge.update(
+                currentNSState, 
+                currentEWState, 
+                deltaTime, 
+                inputs // ★ 把整包輸入傳進去
+            );
+        }
+
+        // =============================================================
+        // [D] UI 更新與車輛機械邏輯
+        // =============================================================
+
+        // 速度顯示
+        if (typeof speedDisplay !== 'undefined') {
+            speedDisplay.innerText = currentSpeedKmh + " km/h";
+        }
+
+        // --- 方向燈自動回正邏輯 (這是車輛機械功能，保留在這裡) ---
+        const turnThreshold = 0.4;    
+        const centerThreshold = 0.3; 
+
+        if (leftSignalOn || rightSignalOn) {
+        //console.log(`方向盤角度: ${wheel.rotation.z.toFixed(2)}, 是否開始轉彎: ${hasStartedTurn}`);
+        }
+        // 左轉燈回正
+        if (leftSignalOn) {
+            if (wheel.rotation.z > turnThreshold) hasStartedTurn = true; 
+            if (hasStartedTurn && wheel.rotation.z < centerThreshold) {
+                //console.log("↩️ 左轉回正，自動熄滅");
+                leftSignalOn = false;   
+                hasStartedTurn = false; 
+                updateSignalVisuals();  
+            }
+        }
+
+        // 右轉燈回正
+        if (rightSignalOn) {
+            if (wheel.rotation.z < -turnThreshold) hasStartedTurn = true;
+            if (hasStartedTurn && wheel.rotation.z > -centerThreshold) {
+                //console.log("↪️ 右轉回正，自動熄滅");
+                rightSignalOn = false;  
+                hasStartedTurn = false; 
+                updateSignalVisuals();  
+            }
+        }
+    }
+
+    // 3. GameManager 和 天氣系統更新 (雨滴動畫等)
+    if (gameManager) {
+        gameManager.update(dt);
+    }
+
+    if (typeof navSystem !== 'undefined' && navSystem) {
+        navSystem.update(); 
+    }
+
+    // 4. 渲染邏輯 (Render)
+    if (typeof leftMirror !== 'undefined' && typeof rightMirror !== 'undefined') {
+        leftMirror.visible = false;
+        rightMirror.visible = false;
+        renderer.setRenderTarget(renderTargetLeft); 
+        renderer.render(scene, mirrorCamLeft);
+        renderer.setRenderTarget(renderTargetRight); 
+        renderer.render(scene, mirrorCamRight);
+        
+        leftMirror.visible = true;
+        rightMirror.visible = true;
+        renderer.setRenderTarget(null);
+    }
+
+    renderer.clear();
+    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+
+if (useTopCamera) {
+        renderer.render(scene, topCamera);
+    } else {
+        // 1. 先畫主畫面
+        renderer.render(scene, camera);
+
+        // 2. 再畫導航 (修正變數路徑)
+        // ★★★ 修改這裡：從 gameManager 裡面找 navigationSystem ★★★
+if (typeof navSystem !== 'undefined' && navSystem) {
+             navSystem.render();
+        }
+    }
+}
+
+// 啟動迴圈
+animate();
+    </script>
