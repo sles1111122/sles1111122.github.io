@@ -231,33 +231,46 @@ async function connectArduino() {
     }
 }
 
+let serialBuffer = ""; 
+
 async function readLoop() {
+    console.log("🟢 啟動序列埠讀取迴圈，等待資料輸入...");
+    
     while (true) {
         try {
             const { value, done } = await reader.read();
             
             if (done) {
-                console.log("讀取結束");
+                console.log("🔴 讀取結束");
                 reader.releaseLock();
                 break;
             }
 
             if (value) {
-                // ★ 重要修正：電腦有時會一口氣收到多行資料，所以要先用換行符號 (\n) 切開
-                const lines = value.split('\n');
+                // DEBUG 1: 如果你想看最原始的資料碎片，可以把下面這行取消註解
+                // console.log("📦 收到碎片:", JSON.stringify(value));
 
-                // 針對每一行資料進行判斷
-                for (let i = 0; i < lines.length; i++) {
-                    const text = lines[i].trim();
-                    
-                    if (!text) continue; // 如果是空行就跳過，處理下一行
+                serialBuffer += value;
+                let newlineIndex = serialBuffer.indexOf('\n');
+                
+                while (newlineIndex >= 0) {
+                    let line = serialBuffer.substring(0, newlineIndex);
+                    serialBuffer = serialBuffer.substring(newlineIndex + 1);
+                    newlineIndex = serialBuffer.indexOf('\n');
+
+                    const text = line.trim();
+                    if (!text) continue; 
+
+                    // DEBUG 2: 看看程式真正切出來、準備處理的字串是什麼
+                    console.log(`🎯 準備處理行: [${text}]`);
 
                     // ==============================
-                    //      1. 類比煞車邏輯 (B 開頭)
+                    //      1. 類比煞車邏輯
                     // ==============================
                     if (text.startsWith("B")) {
-                        // 把 "B" 拿掉，剩下的轉成數字
                         const parsedValue = parseInt(text.replace("B", ""));
+                        console.log(`🛑 解析到煞車原始數值: ${parsedValue}`); // DEBUG 3
+
                         const deadZone = 100;
                         const maxInput = 1000;
 
@@ -265,20 +278,21 @@ async function readLoop() {
                             let brakeIntensity = (parsedValue - deadZone) / (maxInput - deadZone);
                             if (brakeIntensity > 1.0) brakeIntensity = 1.0;
 
-                            keys.ArrowDown = true; // 觸發鍵盤「下」鍵
+                            keys.ArrowDown = true; 
                             
                             if (typeof arduinoBrakeForce !== 'undefined') {
                                 arduinoBrakeForce = brakeIntensity; 
                             }
                             
-                            // 紀錄反應時間邏輯
+                            // DEBUG 4: 確認煞車有沒有成功換算成力道
+                            console.log(`🔴 煞車踩下！目前力道: ${brakeIntensity.toFixed(2)}`);
+                            
                             if (typeof arduinoBrake !== 'undefined' && arduinoBrake === false) {
                                  if (typeof gameManager !== 'undefined' && gameManager.dataCollector) {
                                     gameManager.dataCollector.recordReaction();
-                                    console.log("觸發煞車反應紀錄！");
+                                    console.log("⏱️ 觸發煞車反應紀錄！");
                                 }
                             }
-                            
                             if (typeof arduinoBrake !== 'undefined') arduinoBrake = true;
                         } else {
                             keys.ArrowDown = false;
@@ -288,11 +302,12 @@ async function readLoop() {
                     }
 
                     // ==============================
-                    //      2. 類比油門邏輯 (G 開頭)
+                    //      2. 類比油門邏輯
                     // ==============================
                     else if (text.startsWith("G")) {
-                        // 把 "G" 拿掉，剩下的轉成數字
                         const parsedValue = parseInt(text.replace("G", ""));
+                        console.log(`💨 解析到油門原始數值: ${parsedValue}`); // DEBUG 5
+
                         const deadZone = 100;
                         const maxInput = 1000;
 
@@ -300,14 +315,16 @@ async function readLoop() {
                             let gasIntensity = (parsedValue - deadZone) / (maxInput - deadZone);
                             if (gasIntensity > 1.0) gasIntensity = 1.0;
 
-                            keys.ArrowUp = true; // 觸發鍵盤「上」鍵
+                            keys.ArrowUp = true; 
                             
-                            // 讓遊戲讀取油門力道
                             if (typeof arduinoGasForce !== 'undefined') {
                                 arduinoGasForce = gasIntensity; 
                             }
-                            
                             if (typeof arduinoGas !== 'undefined') arduinoGas = true;
+
+                            // DEBUG 6: 確認油門有沒有成功換算成力道
+                            console.log(`🟢 油門踩下！目前力道: ${gasIntensity.toFixed(2)}`);
+
                         } else {
                             keys.ArrowUp = false;
                             if (typeof arduinoGas !== 'undefined') arduinoGas = false;
