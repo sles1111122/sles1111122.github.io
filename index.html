@@ -234,7 +234,6 @@ async function connectArduino() {
 async function readLoop() {
     while (true) {
         try {
-            // 讀取資料
             const { value, done } = await reader.read();
             
             if (done) {
@@ -244,62 +243,77 @@ async function readLoop() {
             }
 
             if (value) {
-                // 有時候資料會連在一起，建議先 trim 去空白
-                // ★ 注意：這裡假設 Arduino 傳送的是 "B1", "B0", "SR", "SL" 這樣的字串
-                const text = value.trim(); 
-                const parsedValue = parseInt(text);
-            // ==============================
-            //      1. 類比煞車邏輯 (Analog Brake)
-            // ==============================
-            // 檢查是否為有效數字 (代表收到 A1 數值)
-            if (!isNaN(parsedValue)) {
-                
-                // --- 設定參數 ---
-                const deadZone = 100;  // 死區：數值小於 100 視為沒按 (消除雜訊)
-                const maxInput = 1000; // Arduino 最大輸入值
+                // ★ 重要修正：電腦有時會一口氣收到多行資料，所以要先用換行符號 (\n) 切開
+                const lines = value.split('\n');
 
-                // --- 判斷邏輯 ---
-                if (parsedValue > deadZone) {
+                // 針對每一行資料進行判斷
+                for (let i = 0; i < lines.length; i++) {
+                    const text = lines[i].trim();
                     
-                    // 1. 計算煞車力道 (0.0 ~ 1.0)
-                    // 公式：(目前數值 - 死區) / (最大值 - 死區)=算出按壓比例
-                    let brakeIntensity = (parsedValue - deadZone) / (maxInput - deadZone);
-                    
-                    // 確保不超過 1.0
-                    if (brakeIntensity > 1.0) brakeIntensity = 1.0;
+                    if (!text) continue; // 如果是空行就跳過，處理下一行
 
-                    // 2. 設定按鍵狀態 (只要有踩，就視為按下)
-                    keys.ArrowDown = true;
-                    
-                    // 3. ★ 關鍵：將力道存入全域變數，讓遊戲物理引擎讀取 ★
-                    // 您的遊戲需要讀取這個數值來決定減速多快
-                    if (typeof arduinoBrakeForce !== 'undefined') {
-                        arduinoBrakeForce = brakeIntensity; 
-                    }
-                    
-                    // 4. 反應紀錄邏輯 (防止一直重複觸發)
-                    // 只有當「原本沒煞車 (arduinoBrake為false)」變成「有煞車」的那一瞬間才紀錄
-                    if (typeof arduinoBrake !== 'undefined' && arduinoBrake === false) {
-                         if (typeof gameManager !== 'undefined' && gameManager.dataCollector) {
-                            gameManager.dataCollector.recordReaction();
-                            console.log("觸發煞車反應紀錄！");
+                    // ==============================
+                    //      1. 類比煞車邏輯 (B 開頭)
+                    // ==============================
+                    if (text.startsWith("B")) {
+                        // 把 "B" 拿掉，剩下的轉成數字
+                        const parsedValue = parseInt(text.replace("B", ""));
+                        const deadZone = 100;
+                        const maxInput = 1000;
+
+                        if (parsedValue > deadZone) {
+                            let brakeIntensity = (parsedValue - deadZone) / (maxInput - deadZone);
+                            if (brakeIntensity > 1.0) brakeIntensity = 1.0;
+
+                            keys.ArrowDown = true; // 觸發鍵盤「下」鍵
+                            
+                            if (typeof arduinoBrakeForce !== 'undefined') {
+                                arduinoBrakeForce = brakeIntensity; 
+                            }
+                            
+                            // 紀錄反應時間邏輯
+                            if (typeof arduinoBrake !== 'undefined' && arduinoBrake === false) {
+                                 if (typeof gameManager !== 'undefined' && gameManager.dataCollector) {
+                                    gameManager.dataCollector.recordReaction();
+                                    console.log("觸發煞車反應紀錄！");
+                                }
+                            }
+                            
+                            if (typeof arduinoBrake !== 'undefined') arduinoBrake = true;
+                        } else {
+                            keys.ArrowDown = false;
+                            if (typeof arduinoBrake !== 'undefined') arduinoBrake = false;
+                            if (typeof arduinoBrakeForce !== 'undefined') arduinoBrakeForce = 0;
                         }
                     }
-                    
-                    // 更新煞車狀態旗標
-                    if (typeof arduinoBrake !== 'undefined') arduinoBrake = true;
 
-                    // Debug 用 (您可以觀察數值變化)
-                console.log(`煞車力道: ${brakeIntensity.toFixed(2)} (原始: ${parsedValue})`);
+                    // ==============================
+                    //      2. 類比油門邏輯 (G 開頭)
+                    // ==============================
+                    else if (text.startsWith("G")) {
+                        // 把 "G" 拿掉，剩下的轉成數字
+                        const parsedValue = parseInt(text.replace("G", ""));
+                        const deadZone = 100;
+                        const maxInput = 1000;
 
-                } else {
-                    // --- 數值在死區內 (視為放開煞車) ---
-                    keys.ArrowDown = false;
-                    
-                    if (typeof arduinoBrake !== 'undefined') arduinoBrake = false;
-                    if (typeof arduinoBrakeForce !== 'undefined') arduinoBrakeForce = 0;
-                }
-            }
+                        if (parsedValue > deadZone) {
+                            let gasIntensity = (parsedValue - deadZone) / (maxInput - deadZone);
+                            if (gasIntensity > 1.0) gasIntensity = 1.0;
+
+                            keys.ArrowUp = true; // 觸發鍵盤「上」鍵
+                            
+                            // 讓遊戲讀取油門力道
+                            if (typeof arduinoGasForce !== 'undefined') {
+                                arduinoGasForce = gasIntensity; 
+                            }
+                            
+                            if (typeof arduinoGas !== 'undefined') arduinoGas = true;
+                        } else {
+                            keys.ArrowUp = false;
+                            if (typeof arduinoGas !== 'undefined') arduinoGas = false;
+                            if (typeof arduinoGasForce !== 'undefined') arduinoGasForce = 0;
+                        }
+                    }
 
                 // ==============================
                 //      2. 方向燈邏輯 (Signal)
