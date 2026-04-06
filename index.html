@@ -336,7 +336,8 @@ console.log(`📥 來自Arduino的原始訊號: [${text}]`);
                 // 偵測：搖桿回正 (SN = Signal Neutral)
                 else if (text.includes("SN")) {
                     lastJoyState = "SN"; // 標記為已放開，下次推動才能再次觸發
-            
+                }
+                }}            
         } catch (error) { 
             console.error("❌ 讀取資料時發生錯誤:", error);
             break;
