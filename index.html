@@ -323,6 +323,9 @@ async function readLoop() {
                     }
                 } 
             }
+        } catch (error) { // <--- 就是這裡！補上這個 catch 區塊就完美了
+            console.error("❌ 讀取資料時發生錯誤:", error);
+            break;
         } 
     }
 }
