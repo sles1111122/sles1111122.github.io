@@ -234,7 +234,7 @@ async function connectArduino() {
 let serialBuffer = ""; 
 
 async function readLoop() {
-    console.log("🟢 網頁端已準備好接收油門與煞車訊號...");
+    console.log("🟢 網頁端已準備好接收油門、煞車與方向燈訊號...");
     
     while (true) {
         try {
@@ -259,28 +259,26 @@ async function readLoop() {
                     const text = line.trim();
                     if (!text) continue; 
 
-                    // --- 參數設定區 (可依據您的硬體手感調整) ---
-                    const deadZone = 100;  // 死區：數值小於此值視為「沒踩」
-                    const maxInput = 1000; // 最大值：Arduino 類比輸入的最大數值
+                    // --- 參數設定區 ---
+                    const deadZone = 100;  // 死區
+                    const maxInput = 1000; // 最大值
 
                     // ==============================
                     //      🅱️ 煞車邏輯處理
                     // ==============================
                     if (text.startsWith("B")) {
-                        const rawValue = parseInt(text.replace("B", "")); // 取得純數字
+                        const rawValue = parseInt(text.replace("B", ""));
                         
                         if (rawValue > deadZone) {
-                            // 計算力道比例 (0.0 ~ 1.0)
                             let intensity = (rawValue - deadZone) / (maxInput - deadZone);
                             if (intensity > 1.0) intensity = 1.0;
 
-                            keys.ArrowDown = true; // 觸發虛擬按鍵
+                            keys.ArrowDown = true; 
                             if (typeof arduinoBrakeForce !== 'undefined') arduinoBrakeForce = intensity;
                             if (typeof arduinoBrake !== 'undefined') arduinoBrake = true;
 
                             console.log(`🛑 煞車踩下！力道: ${intensity.toFixed(2)} (原始數值: ${rawValue})`);
                         } else {
-                            // 數值太小，視為放開煞車
                             keys.ArrowDown = false;
                             if (typeof arduinoBrakeForce !== 'undefined') arduinoBrakeForce = 0;
                             if (typeof arduinoBrake !== 'undefined') arduinoBrake = false;
@@ -291,20 +289,18 @@ async function readLoop() {
                     //      ⛽ 油門邏輯處理
                     // ==============================
                     else if (text.startsWith("G")) {
-                        const rawValue = parseInt(text.replace("G", "")); // 取得純數字
+                        const rawValue = parseInt(text.replace("G", "")); 
                         
                         if (rawValue > deadZone) {
-                            // 計算力道比例 (0.0 ~ 1.0)
                             let intensity = (rawValue - deadZone) / (maxInput - deadZone);
                             if (intensity > 1.0) intensity = 1.0;
 
-                            keys.ArrowUp = true; // 觸發虛擬按鍵
+                            keys.ArrowUp = true; 
                             if (typeof arduinoGasForce !== 'undefined') arduinoGasForce = intensity;
                             if (typeof arduinoGas !== 'undefined') arduinoGas = true;
 
                             console.log(`💨 油門踩下！力道: ${intensity.toFixed(2)} (原始數值: ${rawValue})`);
                         } else {
-                            // 數值太小，視為放開油門
                             keys.ArrowUp = false;
                             if (typeof arduinoGasForce !== 'undefined') arduinoGasForce = 0;
                             if (typeof arduinoGas !== 'undefined') arduinoGas = false;
@@ -314,33 +310,39 @@ async function readLoop() {
                     // ==============================
                     //      🛞 方向燈邏輯處理
                     // ==============================
-                if (text.includes("SR")) {
-                    // 只有當「上一次是置中 (SN)」，現在「變成推向右 (SR)」時才觸發一次
-                    if (lastJoyState === "SN") {
-                        rightSignalOn = !rightSignalOn; // 切換開關
-                        leftSignalOn = false;           // 關掉另一邊
-                        updateSignalVisuals();
-                        console.log(rightSignalOn ? "➡ [右燈] 開啟" : "➡ [右燈] 關閉");
+                    // 注意：這裡幫您接上了 else if，讓程式判斷更有效率
+                    else if (text.includes("SR")) {
+                        // 只有當「上一次是置中 (SN)」，現在「變成推向右 (SR)」時才觸發一次
+                        if (lastJoyState === "SN") {
+                            rightSignalOn = !rightSignalOn; // 切換開關
+                            leftSignalOn = false;           // 關掉另一邊
+                            updateSignalVisuals();
+                            console.log(rightSignalOn ? "➡ [右燈] 開啟" : "➡ [右燈] 關閉");
+                        }
+                        lastJoyState = "SR"; // 更新狀態
+                    } 
+                    
+                    // 偵測：左轉 (SL = Signal Left)
+                    else if (text.includes("SL")) {
+                        // 只有當「上一次是置中」，現在「變成推向左」時才觸發
+                        if (lastJoyState === "SN") {
+                            leftSignalOn = !leftSignalOn;  // 切換開關
+                            rightSignalOn = false;         // 關掉另一邊
+                            updateSignalVisuals();
+                            console.log(leftSignalOn ? "⬅ [左燈] 開啟" : "⬅ [左燈] 關閉");
+                        }
+                        lastJoyState = "SL"; // 更新狀態
                     }
-                    lastJoyState = "SR"; // 更新狀態
-                } 
-                
-                // 偵測：左轉 (SL = Signal Left)
-                else if (text.includes("SL")) {
-                    // 只有當「上一次是置中」，現在「變成推向左」時才觸發
-                    if (lastJoyState === "SN") {
-                        leftSignalOn = !leftSignalOn;  // 切換開關
-                        rightSignalOn = false;         // 關掉另一邊
-                        updateSignalVisuals();
-                        console.log(leftSignalOn ? "⬅ [左燈] 開啟" : "⬅ [左燈] 關閉");
-                    }
-                    lastJoyState = "SL"; // 更新狀態
-                }
-                
-                // 偵測：搖桿回正 (SN = Signal Neutral)
-                else if (text.includes("SN")) {
-                    lastJoyState = "SN"; // 標記為已放開，下次推動才能再次觸發
-        } catch (error) { // <--- 就是這裡！補上這個 catch 區塊就完美了
+                    
+                    // 偵測：搖桿回正 (SN = Signal Neutral)
+                    else if (text.includes("SN")) {
+                        lastJoyState = "SN"; // 標記為已放開，下次推動才能再次觸發
+                    } // ⬅️ 補上方向燈 SN 的右大括號
+                    
+                } // ⬅️ 補上 while (newlineIndex >= 0) 的右大括號
+            } // ⬅️ 補上 if (value) 的右大括號
+            
+        } catch (error) { 
             console.error("❌ 讀取資料時發生錯誤:", error);
             break;
         } 
