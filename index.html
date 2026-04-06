@@ -310,46 +310,25 @@ async function readLoop() {
                             if (typeof arduinoGas !== 'undefined') arduinoGas = false;
                         }
                     }
-
-                // ==============================
-                //      2. 方向燈邏輯 (Signal)
-                // ==============================
-                
-                // 偵測：右轉 (SR = Signal Right)
-                if (text.includes("SR")) {
-                    // 只有當「上一次是置中 (SN)」，現在「變成推向右 (SR)」時才觸發一次
-                    if (lastJoyState === "SN") {
-                        rightSignalOn = !rightSignalOn; // 切換開關
-                        leftSignalOn = false;           // 關掉另一邊
-                        updateSignalVisuals();
-                        console.log(rightSignalOn ? "➡ [右燈] 開啟" : "➡ [右燈] 關閉");
+                    
+                    // ==============================
+                    //      🛞 方向盤邏輯處理
+                    // ==============================
+                    else if (text === "SR") {
+                        keys.ArrowRight = true; keys.ArrowLeft = false;
+                    } else if (text === "SL") {
+                        keys.ArrowLeft = true; keys.ArrowRight = false;
+                    } else if (text === "SN") {
+                        keys.ArrowRight = false; keys.ArrowLeft = false;
                     }
-                    lastJoyState = "SR"; // 更新狀態
                 } 
-                
-                // 偵測：左轉 (SL = Signal Left)
-                else if (text.includes("SL")) {
-                    // 只有當「上一次是置中」，現在「變成推向左」時才觸發
-                    if (lastJoyState === "SN") {
-                        leftSignalOn = !leftSignalOn;  // 切換開關
-                        rightSignalOn = false;         // 關掉另一邊
-                        updateSignalVisuals();
-                        console.log(leftSignalOn ? "⬅ [左燈] 開啟" : "⬅ [左燈] 關閉");
-                    }
-                    lastJoyState = "SL"; // 更新狀態
-                }
-                
-                // 偵測：搖桿回正 (SN = Signal Neutral)
-                else if (text.includes("SN")) {
-                    lastJoyState = "SN"; // 標記為已放開，下次推動才能再次觸發
-                }
             }
-        } 
-            catch (error) {
-            console.error("讀取錯誤:", error);
+        } catch (error) {
+            console.error("❌ 讀取資料時發生錯誤:", error);
             break;
         }
     }
+}
         // Three.js 初始化
         const scene = new THREE.Scene();
         const skyColor = 0x87CEEB;
