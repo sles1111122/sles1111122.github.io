@@ -127,7 +127,7 @@ recordEventStart(type) {
                 <br>
                 <div style="display: flex; gap: 20px; justify-content: center;">
                     <button id="gm-connect-btn" style="padding: 15px 30px; font-size: 20px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 50px;">📡 連接感測器</button>
-                    <button id="gm-start-btn" style="padding: 15px 40px; font-size: 20px; cursor: pointer; background: linear-gradient(45deg, #4db8ff, #0077cc); color: white; border: none; border-radius: 50px;">🚀 開始遊戲</button>
+                    <button id="gm-start-btn" style="padding: 15px 40px; font-size: 20px; cursor: pointer; background: linear-gradient(45deg, #4db8ff, #0077cc); color: white; border: none; border-radius: 50px;">🚀 開始訓練</button>
                 </div>
                 <p id="gm-status" style="margin-top: 15px; color: #aaa;">尚未連接</p>
             </div>
