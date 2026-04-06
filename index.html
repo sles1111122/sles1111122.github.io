@@ -260,7 +260,7 @@ async function readLoop() {
                     if (!text) continue; 
 console.log(`📥 來自Arduino的原始訊號: [${text}]`);
                     // --- 參數設定區 ---
-                    const deadZone = 100;  // 死區
+                    const deadZone = 200;  // 死區
                     const maxInput = 1000; // 最大值
 
                     // ==============================
