@@ -344,12 +344,11 @@ async function readLoop() {
                     lastJoyState = "SN"; // 標記為已放開，下次推動才能再次觸發
                 }
             }
-        } catch (error) {
+        } 
+            catch (error) {
             console.error("讀取錯誤:", error);
             break;
         }
-    }
-}
     }
         // Three.js 初始化
         const scene = new THREE.Scene();
