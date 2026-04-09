@@ -1116,14 +1116,12 @@ function animate() {
         if (keys.ArrowUp) {
             let intensity = (typeof arduinoGasForce !== 'undefined') ? arduinoGasForce : 1;
             speed += (0.005* intensity); 
-            if (speed < maxSpeed) speed += 0.005;
         }
+        if (speed < maxSpeed) speed += 0.005;
+
         if (keys.ArrowDown) {
             // 如果有 arduinoBrakeForce 就用它，沒有的話預設為 1 (鍵盤操作時)
             let intensity = (typeof arduinoBrakeForce !== 'undefined') ? arduinoBrakeForce : 1;
-            
-            // 減速量 = 最大煞車力 * 目前踩踏深度
-            // 例如：輕踩 (0.2) -> 減速 0.02*0.2，重踩 (1.0) -> 減速 1*0.02
             speed -= (0.015* intensity); 
         }
         if (speed < 0) speed = 0;
