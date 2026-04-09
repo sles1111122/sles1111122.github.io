@@ -1115,7 +1115,7 @@ function animate() {
         // 速度控制
         if (keys.ArrowUp) {
             let intensity = (typeof arduinoGasForce !== 'undefined') ? arduinoGasForce : 1;
-            speed -= (0.005* intensity); 
+            speed += (0.005* intensity); 
             if (speed < maxSpeed) speed += 0.005;
         }
         if (keys.ArrowDown) {
