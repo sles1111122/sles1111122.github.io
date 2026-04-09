@@ -147,7 +147,7 @@
 
         // --- 1. 全域變數與設定 ---
         let speed = 0.0;
-        let maxSpeed = 1.2;
+        let maxSpeed = 1.0;
         let minSpeed = -0.5;   
         let carAngle = 0; 
         let currentGear = 'D'; 
@@ -1117,7 +1117,7 @@ function animate() {
             let intensity = (typeof arduinoGasForce !== 'undefined') ? arduinoGasForce : 1;
             speed += (0.005* intensity); 
         }
-        if (speed < maxSpeed) speed += 0.005;
+        if (speed > maxSpeed) speed = 1.0;
 
         if (keys.ArrowDown) {
             // 如果有 arduinoBrakeForce 就用它，沒有的話預設為 1 (鍵盤操作時)
