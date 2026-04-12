@@ -102,71 +102,88 @@ recordEventStart(type) {
         this.externalConnectAction = action;
     }
 
-    createStartScreen() {
-        const existingUI = [
-            document.getElementById('dashboard'),
-            document.getElementById('start-btn'),
-            document.getElementById('nav-ui')
-        ];
-        existingUI.forEach(el => { if (el) el.style.display = 'none'; });
+createStartScreen() {
+    const existingUI = [
+        document.getElementById('dashboard'),
+        document.getElementById('start-btn'),
+        document.getElementById('nav-ui')
+    ];
+    existingUI.forEach(el => { if (el) el.style.display = 'none'; });
 
-        const startScreen = document.createElement('div');
-        startScreen.id = 'start-screen';
-        Object.assign(startScreen.style, {
-            position: 'fixed', top: '0', left: '0',
-            width: '100%', height: '100%',
-            backgroundColor: 'rgba(0, 0, 0, 0.85)',
-            display: 'flex', flexDirection: 'column',
-            justifyContent: 'center', alignItems: 'center',
-            zIndex: '99999', color: 'white', backdropFilter: 'blur(5px)'
-        });
+    const startScreen = document.createElement('div');
+    startScreen.id = 'start-screen';
+    Object.assign(startScreen.style, {
+        position: 'fixed', top: '0', left: '0',
+        width: '100%', height: '100%',
+        backgroundColor: 'rgba(0, 0, 0, 0.9)', // 稍微調深一點增加閱讀性
+        display: 'flex', flexDirection: 'column',
+        justifyContent: 'center', alignItems: 'center',
+        zIndex: '99999', color: 'white', backdropFilter: 'blur(8px)'
+    });
 
-        startScreen.innerHTML = `
-            <div style="text-align: center; max-width: 600px; padding: 40px; border: 2px solid #444; border-radius: 15px; background: rgba(30,30,30,0.9);">
-                <h1 style="font-size: 48px; color: #4db8ff;">🚗 駕駛模擬訓練</h1>
-                <br>
-                <div style="display: flex; gap: 20px; justify-content: center;">
-                    <button id="gm-connect-btn" style="padding: 15px 30px; font-size: 20px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 50px;">📡 連接感測器</button>
-                    <button id="gm-start-btn" style="padding: 15px 40px; font-size: 20px; cursor: pointer; background: linear-gradient(45deg, #4db8ff, #0077cc); color: white; border: none; border-radius: 50px;">🚀 開始訓練</button>
-                </div>
-                <p id="gm-status" style="margin-top: 15px; color: #aaa;">尚未連接</p>
+    // 將說明內容格式化為 HTML
+    startScreen.innerHTML = `
+        <div style="text-align: center; max-width: 700px; padding: 40px; border: 1px solid #555; border-radius: 20px; background: rgba(25,25,25,0.95); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h1 style="font-size: 42px; color: #4db8ff; margin-bottom: 20px;">🚗 駕駛模擬訓練</h1>
+            
+            <div style="text-align: left; background: rgba(255,255,255,0.05); padding: 25px; border-radius: 12px; margin-bottom: 30px; line-height: 1.6; border-left: 4px solid #4db8ff;">
+                <p style="margin: 0 0 10px 0;"><strong style="color: #ffcc00;">🎮 操作說明：</strong><br>
+                    使用方向鍵 <b>↑ ↓ ← →</b> 進行移動（加速/減速/轉向）。<br>
+                    檔位切換：<b>R / D</b> | 開大燈：<b>H</b> | 左右方向燈：<b>Z / C</b>
+                </p>
+                <p style="margin: 0 0 10px 0;"><strong style="color: #ffcc00;">🛡️ 訓練說明：</strong><br>
+                    訓練過程中會隨機發生各種道路狀況，請想像您正行駛於真實道路，並做出適當的反應。
+                </p>
+                <p style="margin: 0;"><strong style="color: #ffcc00;">🚩 目標說明：</strong><br>
+                    請依照右下角導航指示抵達指定位置，累計成功抵達 <b>5 次</b> 後訓練即結束。
+                </p>
             </div>
-        `;
 
-        document.body.appendChild(startScreen);
+            <div style="display: flex; gap: 20px; justify-content: center;">
+                <button id="gm-connect-btn" style="padding: 15px 30px; font-size: 18px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 50px; transition: 0.3s;">📡 連接感測器</button>
+                <button id="gm-start-btn" style="padding: 15px 40px; font-size: 18px; cursor: pointer; background: linear-gradient(45deg, #4db8ff, #0077cc); color: white; border: none; border-radius: 50px; transition: 0.3s; font-weight: bold;">🚀 開始訓練</button>
+            </div>
+            <p id="gm-status" style="margin-top: 20px; color: #aaa; font-size: 14px;">系統狀態：尚未連接</p>
+        </div>
+    `;
 
-        const startBtn = document.getElementById('gm-start-btn');
-        const connectBtn = document.getElementById('gm-connect-btn');
-        const statusText = document.getElementById('gm-status');
+    document.body.appendChild(startScreen);
 
-        connectBtn.addEventListener('click', async () => {
-            if (this.externalConnectAction) {
-                statusText.innerText = "⏳ 連接中...";
-                try {
-                    await this.externalConnectAction(); 
-                    statusText.innerText = "✅ 裝置已連接！";
-                    statusText.style.color = "#28a745";
-                    connectBtn.style.background = "#1e7e34";
-                    connectBtn.innerText = "已連接";
-                    connectBtn.disabled = true;
-                } catch (error) {
-                    console.error("連接失敗:", error);
-                    statusText.innerText = "❌ 連接失敗，請重試";
-                    statusText.style.color = "#dc3545";
-                }
-            } else {
-                statusText.innerText = "⚠️ 程式未綁定連接功能";
+    const startBtn = document.getElementById('gm-start-btn');
+    const connectBtn = document.getElementById('gm-connect-btn');
+    const statusText = document.getElementById('gm-status');
+
+    // 連接按鈕邏輯
+    connectBtn.addEventListener('click', async () => {
+        if (this.externalConnectAction) {
+            statusText.innerText = "⏳ 正在嘗試連接裝置...";
+            try {
+                await this.externalConnectAction(); 
+                statusText.innerText = "✅ 裝置已連接，可以開始訓練";
+                statusText.style.color = "#28a745";
+                connectBtn.style.background = "#1e7e34";
+                connectBtn.innerText = "已連接";
+                connectBtn.disabled = true;
+            } catch (error) {
+                console.error("連接失敗:", error);
+                statusText.innerText = "❌ 連接失敗，請確認裝置是否開啟並重試";
+                statusText.style.color = "#dc3545";
             }
-        });
+        } else {
+            statusText.innerText = "⚠️ 系統錯誤：未偵測到連接模組";
+        }
+    });
 
-        startBtn.addEventListener('click', () => {
-            startScreen.style.opacity = '0';
-            setTimeout(() => {
-                startScreen.style.display = 'none';
-                this.startGame(); 
-            }, 500); 
-        });
-    }
+    // 開始訓練按鈕邏輯
+    startBtn.addEventListener('click', () => {
+        startScreen.style.transition = 'opacity 0.5s ease';
+        startScreen.style.opacity = '0';
+        setTimeout(() => {
+            startScreen.style.display = 'none';
+            this.startGame(); 
+        }, 500); 
+    });
+}
 
     startGame() {
         console.log("遊戲正式開始！");
