@@ -13,7 +13,7 @@ export class NavigationSystem {
         this.targetNode = null; 
         this.path = [];         
         this.goalsCompleted = 0; 
-        this.maxGoals = 5;      
+        this.maxGoals = 2;      
 
         // --- B. 小地圖設定 ---
         this.mapSize = 250; 
