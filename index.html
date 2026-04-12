@@ -357,6 +357,7 @@ async function readLoop() {
         topCamera.lookAt(centerX, 0, centerZ); // 往下看城市中心
         // ★ 修改：調整初始相機位置到城市中心附近
         camera.position.set(0, 1.5, 0);
+        camera.lookAt(100, 1.5, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
